@@ -1,3 +1,11 @@
+-- Roblox Studio compatibility (no executor).
+-- On an executor these functions already exist, so nothing changes.
+local getgenv = getgenv or function() return _G end
+local gethui = gethui or function()
+    local Player = game:GetService("Players").LocalPlayer
+    return Player and Player:WaitForChild("PlayerGui") or game:GetService("CoreGui")
+end
+
 do
     local function IsMidnight(Lib)
         if type(Lib) ~= "table" then return false end
@@ -83,7 +91,7 @@ do
         return nil
     end
 
-    -- a fonte em negrito é criada uma vez só (antes era recriada a cada título)
+    -- the bold font is created only once (it used to be recreated for every title)
     local BoldFontSafeCache
     local function GetBoldFontSafe()
         if BoldFontSafeCache then return BoldFontSafeCache end
@@ -109,13 +117,13 @@ do
     end
 
     local BadgeDescriptions = {
-        BUG  = "Esta função não está funcionando perfeitamente e pode conter falhas técnicas.",
-        RISK = "Esta função possui risco de banimento alto. A punição não é garantida, mas recomendamos cautela.",
-        TEST = "Função ainda não testada completamente. Pode conter erros técnicos ou riscos não mapeados de ban.",
-        SAFE = "Função recomendada e segura para uso. Projetada para minimizar o risco de banimento.",
-        NEW  = "Nova função adicionada recentemente, totalmente testada, aprovada e segura para uso.",
-        VIP  = "Função exclusiva destinada apenas aos usuários que possuem o plano VIP/Premium.",
-        INFO = "Esta função ainda não tem uma explicação."
+        BUG  = "This feature does not work perfectly and may have technical issues.",
+        RISK = "This feature has a high ban risk. A punishment is not guaranteed, but we recommend caution.",
+        TEST = "This feature has not been fully tested yet. It may have technical errors or unknown ban risks.",
+        SAFE = "Recommended and safe to use. Designed to minimize the ban risk.",
+        NEW  = "New feature added recently, fully tested, approved and safe to use.",
+        VIP  = "Exclusive feature, only for users with the VIP/Premium plan.",
+        INFO = "This feature does not have an explanation yet."
     }
 
     Library = {
@@ -205,9 +213,21 @@ do
                 end
             end
 
-            if not Module then error("fonte de ícones inválida") end
+            if not Module then error("invalid icon source") end
             return Module
         end)
+
+        -- Studio (no executor): use the ReplicatedStorage.MidnightIcons ModuleScript, if it exists
+        if not (success and iconsModule) and RunService:IsStudio() then
+            local Holder = game:GetService("ReplicatedStorage"):FindFirstChild("MidnightIcons")
+            local OkMap, Map = pcall(function() return Holder and require(Holder) end)
+            if OkMap and type(Map) == "table" then
+                success, iconsModule = true, {
+                    GetIcon = function(Name) return Map[Name] end,
+                    SetIconsType = function() end
+                }
+            end
+        end
 
         if success and iconsModule then
             Library.Icons = iconsModule
@@ -215,11 +235,11 @@ do
                 iconsModule.SetIconsType(Library.IconsType)
             end
         else
-            warn("[MidnightLib] Falha ao carregar Footagesus Icons. Usando apenas rbxassetid.")
+            warn("[MidnightLib] Failed to load Footagesus Icons. Using rbxassetid only.")
         end
     end
 
-    -- cache dos ícones já resolvidos (o mesmo ícone é pedido por vários elementos)
+    -- cache of resolved icons (the same icon is requested by many elements)
     local IconCache = {}
 
     function Library:SetIconsType(iconType)
@@ -276,7 +296,7 @@ do
 
         local imageId = self:GetIcon(iconName)
         if not imageId then
-            warn("[MidnightLib] Ícone não encontrado: " .. tostring(iconName))
+            warn("[MidnightLib] Icon not found: " .. tostring(iconName))
             return nil
         end
 
@@ -387,7 +407,7 @@ do
             Inst.TextTransparency = 0.2
             Stroke.Color = Theme.Accent
         elseif State == nil or State == "" or State == "None" then
-            Inst.Text = "Nenhuma"
+            Inst.Text = "None"
             Inst.TextTransparency = 0.55
             Stroke.Color = Theme.Outline
         else
@@ -433,8 +453,8 @@ do
         Library:AddToTheme(Thumb, {BackgroundColor3 = AccentDark})
         Thumb.BackgroundTransparency = 1
 
-        -- mesma animação (aparece, some 1.1s depois de parar), mas sem criar uma animação
-        -- e um task.delay novos a cada pixel rolado: um timer só, que vai sendo empurrado
+        -- same animation (shows, hides 1.1s after scrolling stops), but without creating a new tween
+        -- and a new task.delay for every scrolled pixel: a single timer that keeps getting pushed back
         local Hovering, Shown, Waiting, HideAt = false, false, false, 0
         local ShowInfo, HideInfo = TweenInfo.new(0.15), TweenInfo.new(0.45)
         local function Reveal()
@@ -489,7 +509,17 @@ do
             Thumb.Position = UDim2New(1, -2, Progress * (1 - Ratio), 4)
         end
 
-        for _, Property in ipairs({"CanvasPosition", "AbsoluteCanvasSize", "AbsoluteWindowSize", "Visible", "Position", "Size", "Parent"}) do
+        -- scrolling only moves the thumb: no need to re-apply the holder's layout for every pixel
+        local function UpdateThumb()
+            if not Holder.Visible or Holder.Parent ~= Scroll.Parent or not Scroll.Parent then return Update() end
+            local Window, Canvas = Scroll.AbsoluteWindowSize.Y, Scroll.AbsoluteCanvasSize.Y
+            local Ratio = MathClamp(Window / Canvas, 0.08, 1)
+            local Progress = MathClamp(Scroll.CanvasPosition.Y / MathMax(Canvas - Window, 1), 0, 1)
+            Thumb.Position = UDim2New(1, -2, Progress * (1 - Ratio), 4)
+        end
+
+        Scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(UpdateThumb)
+        for _, Property in ipairs({"AbsoluteCanvasSize", "AbsoluteWindowSize", "Visible", "Position", "Size", "Parent", "AnchorPoint", "LayoutOrder"}) do
             Scroll:GetPropertyChangedSignal(Property):Connect(Update)
         end
         task.defer(Update)
@@ -554,11 +584,18 @@ do
         Instances.__index = Instances
 
         Instances.Create = function(self, Class, Properties)
-            local NewItem = { Instance = InstanceNew(Class), Properties = Properties, Class = Class }
+            local Inst = InstanceNew(Class)
+            local NewItem = { Instance = Inst, Properties = Properties, Class = Class }
             setmetatable(NewItem, Instances)
-            for Property, Value in pairs(NewItem.Properties) do NewItem.Instance[Property] = Value end
-            if Class == "TextBox" and Properties.ClipsDescendants == nil then NewItem.Instance.ClipsDescendants = true end
-            if Class == "ScrollingFrame" and NewItem.Instance.ScrollBarThickness == 0 then NewItem.Instance.ScrollBarImageTransparency = 1 end
+            -- Parent goes last: setting properties on an instance that is not in the tree yet
+            -- avoids re-running layout/rendering work for every single property
+            local Parent = Properties.Parent
+            for Property, Value in pairs(Properties) do
+                if Property ~= "Parent" then Inst[Property] = Value end
+            end
+            if Class == "TextBox" and Properties.ClipsDescendants == nil then Inst.ClipsDescendants = true end
+            if Class == "ScrollingFrame" and Inst.ScrollBarThickness == 0 then Inst.ScrollBarImageTransparency = 1 end
+            if Parent ~= nil then Inst.Parent = Parent end
             return NewItem
         end
 
@@ -833,6 +870,7 @@ do
             end)
 
             local SMOOTHING = 24
+            local RESIZE_KEYS = {"W", "H", "Left", "Top"} -- created once instead of every frame
             local ComputeTarget
 
             local function Apply(State)
@@ -853,7 +891,7 @@ do
 
                 local Alpha = 1 - math.exp(-SMOOTHING * MathMin(DeltaTime, 0.1))
                 local Settled = true
-                for _, Key in ipairs({"W", "H", "Left", "Top"}) do
+                for _, Key in ipairs(RESIZE_KEYS) do
                     local Diff = Target[Key] - Current[Key]
                     if MathAbs(Diff) > 0.3 then Settled = false end
                     Current[Key] = Current[Key] + Diff * Alpha
@@ -910,7 +948,7 @@ do
                         if httpSuccess and response then
                             writefile(Data.Id, response)
                         else
-                            error("Download da fonte falhou.")
+                            error("Font download failed.")
                         end
                     end
 
@@ -933,7 +971,11 @@ do
             if success and fontObj then
                 return fontObj
             end
-            return Font.fromEnum(Enum.Font.SourceSans)
+            -- Fallback font (Studio, or the download failed): Builder Sans Medium
+            local okBuilder, Builder = pcall(function()
+                return Font.new(Font.fromEnum(Enum.Font.BuilderSans).Family, Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+            end)
+            return okBuilder and Builder or Font.fromEnum(Enum.Font.SourceSans)
         end
 
         Library.Font = CustomFont:New("OutfitMedium", 400, "Regular", {
@@ -943,19 +985,19 @@ do
     end
 
     local BadgeInfo = {
-        BUG  = {Label = "Instável",       Level = 3},
-        RISK = {Label = "Risco de ban",   Level = 5},
-        TEST = {Label = "Em teste",       Level = 3},
-        SAFE = {Label = "Seguro",         Level = 1},
-        NEW  = {Label = "Novidade",       Level = 1},
-        VIP  = {Label = "Exclusivo VIP"},
-        INFO = {Label = "Como funciona"},
+        BUG  = {Label = "Unstable",       Level = 3},
+        RISK = {Label = "Ban risk",       Level = 5},
+        TEST = {Label = "Testing",        Level = 3},
+        SAFE = {Label = "Safe",           Level = 1},
+        NEW  = {Label = "New",            Level = 1},
+        VIP  = {Label = "VIP only"},
+        INFO = {Label = "How it works"},
     }
     Library.BadgeInfo = BadgeInfo
 
     local function RiskText(Level)
-        if Level <= 2 then return "Baixo" elseif Level == 3 then return "Médio" end
-        return "Alto"
+        if Level <= 2 then return "Low" elseif Level == 3 then return "Medium" end
+        return "High"
     end
 
     function Library:CreateInfoPopup(Title, Description, BadgeType, Anchor)
@@ -1065,7 +1107,7 @@ do
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
             RichText = true,
-            Text = "<b>" .. tostring(Title or "Informação"):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;") .. "</b>",
+            Text = "<b>" .. tostring(Title or "Information"):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;") .. "</b>",
             TextColor3 = Theme.Text,
             FontFace = Library.Font,
             TextSize = 16,
@@ -1080,7 +1122,7 @@ do
             Size = UDim2New(1, 0, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
-            Text = Description or "Sem detalhes adicionais disponíveis.",
+            Text = Description or "No additional details available.",
             TextColor3 = Theme.Text,
             TextTransparency = 0.25,
             FontFace = Library.Font,
@@ -1097,7 +1139,7 @@ do
                 Size = UDim2New(1, 0, 0, 14),
                 BackgroundTransparency = 1,
                 RichText = true,
-                Text = StringFormat('Nível de risco  <font color="#%s">%s</font>', Color:ToHex(), RiskText(Info.Level)),
+                Text = StringFormat('Risk level  <font color="#%s">%s</font>', Color:ToHex(), RiskText(Info.Level)),
                 TextColor3 = Theme.Text,
                 TextTransparency = 0.45,
                 FontFace = Library.Font,
@@ -1205,7 +1247,7 @@ do
 
         local BType = Data.Badge:upper()
         local BColor = Library.BadgeColors[BType] or Library.Theme.Accent
-        local BDesc = Data.BadgeDescription or (BType == "INFO" and GetDescriptionText(Data)) or BadgeDescriptions[BType] or "Sem detalhes adicionais sobre esta tag."
+        local BDesc = Data.BadgeDescription or (BType == "INFO" and GetDescriptionText(Data)) or BadgeDescriptions[BType] or "No additional details about this tag."
 
         local Badge = Instances:Create("TextButton", {
             Parent = Parent,
@@ -1266,7 +1308,7 @@ do
         updatePos()
 
         Badge:Connect("MouseButton1Click", function()
-            Library:CreateInfoPopup(Data.Name or Data.Title or "Informação", BDesc, BType, Badge.Instance)
+            Library:CreateInfoPopup(Data.Name or Data.Title or "Information", BDesc, BType, Badge.Instance)
         end)
 
         return Badge
@@ -1419,7 +1461,7 @@ do
         self:Notify(NotificationConfig)
     end
 
-    -- índice nome -> conexão: desconectar é O(1) (antes varria a lista inteira a cada instância destruída)
+    -- name -> connection index: disconnecting is O(1) (it used to scan the whole list for every destroyed instance)
     local ConnectionByName = {}
 
     Library.Unload = function(self)
@@ -1495,7 +1537,7 @@ do
     Library.Connect = function(self, Event, Callback, Name)
         if not Event then return end
         self.UnnamedConnections = self.UnnamedConnections + 1
-        -- o contador já garante nome único (sem gerar GUID a cada conexão)
+        -- the counter already guarantees a unique name (no GUID per connection)
         Name = Name or ("connection_number_" .. self.UnnamedConnections)
 
         local NewConnection = {
@@ -1518,7 +1560,7 @@ do
         ConnectionByName[Name] = nil
         if Connection.Connection then Connection.Connection:Disconnect() end
 
-        -- remove trocando pelo último da lista (a ordem das conexões não importa)
+        -- remove by swapping with the last item (connection order does not matter)
         local List, Index = self.Connections, Connection.Index
         if Index and List[Index] == Connection then
             local Last = List[#List]
@@ -1538,7 +1580,7 @@ do
         return Flag
     end
 
-    -- remove um item da lista do tema em O(1) (troca pelo último; a ordem não importa)
+    -- remove an item from the theme list in O(1) (swap with the last; order does not matter)
     local function RemoveThemeData(self, ThemeData)
         local List, Index = self.ThemeItems, ThemeData.Index
         if Index and List[Index] == ThemeData then
@@ -1602,7 +1644,7 @@ do
     Library.SetTheme = function(self, ThemeName)
         local NewTheme = Themes[ThemeName]
         if not NewTheme then
-            warn("[MidnightLib] Tema inexistente: " .. tostring(ThemeName))
+            warn("[MidnightLib] Theme not found: " .. tostring(ThemeName))
             return false
         end
 
@@ -1610,7 +1652,7 @@ do
             self.Theme[Key] = Color
         end
 
-        -- reaplica e já compacta a lista numa passada só (itens sem pai saem, igual antes)
+        -- reapply and compact the list in a single pass (items without a parent are dropped, as before)
         local Alive = {}
         for _, ThemeData in ipairs(self.ThemeItems) do
             local Item = ThemeData.Item
@@ -1712,8 +1754,8 @@ do
             if success then
                 loaded = true
                 Library:Notify({
-                    Title = "Sincronizado",
-                    Content = "Configurações do getgenv() serão aplicadas!",
+                    Title = "Synced",
+                    Content = "Settings from getgenv() will be applied!",
                     Duration = 5,
                     Type = "SAFE"
                 })
@@ -1727,7 +1769,7 @@ do
                 if loadedConfig then
                     Library:Notify({
                         Title = "Auto-Load",
-                        Content = "Configurações locais serão aplicadas!",
+                        Content = "Local settings will be applied!",
                         Duration = 4,
                         Type = "SAFE"
                     })
@@ -2400,7 +2442,7 @@ do
             if StringFind(tostring(Key), "Enum") then
                 local parsedKey = parseKey(tostring(Key))
                 if parsedKey == Library.ToggleKey then
-                    warn("⚠️ Conflito de tecla detectado!")
+                    warn("⚠️ Key conflict detected!")
                 end
 
                 if IsBackspace(Key) then
@@ -2438,6 +2480,12 @@ do
                     SetKeycap(Items["KeyButton"], KeyStroke, TextToDisplay)
                 end
 
+                Library.Flags[Keybind.Flag] = {
+                    Mode = Keybind.Mode,
+                    Key = Keybind.Key,
+                    Toggled = Keybind.Toggled
+                }
+
                 if not silent then FireCallback() end
                 Library:SaveAutosave()
             elseif TableFind({"Toggle", "Hold", "Always"}, Key) then
@@ -2453,6 +2501,7 @@ do
         Items["KeyButton"]:Connect("MouseButton1Click", function()
             if Keybind.Locked then return end
             Keybind.Picking = true
+            Library.KeybindPicking = true
             SetKeycap(Items["KeyButton"], KeyStroke, "...")
 
             local InputBegan
@@ -2464,6 +2513,7 @@ do
                 end
                 InputBegan:Disconnect()
                 InputBegan = nil
+                task.defer(function() Library.KeybindPicking = false end)
             end)
         end)
 
@@ -2471,7 +2521,8 @@ do
             if Keybind.Value == "None" or Keybind.Value == "" or Keybind.Picking then return end
 
             local targetInput = tostring(Input.KeyCode) == Keybind.Key or tostring(Input.UserInputType) == Keybind.Key
-            if targetInput and not GameProcessed and not Keybind.Locked then
+            local Allowed = not GameProcessed or (Input.UserInputType == Enum.UserInputType.Keyboard and not UserInputService:GetFocusedTextBox())
+            if targetInput and Allowed and not Keybind.Locked then
                 if Keybind.Mode == "Toggle" then
                     Keybind:Press()
                 else
@@ -2685,7 +2736,7 @@ local function TryOpenDiscordInvite(Link)
 end
 
 function MidnightBanner.new(Library, Window, Config)
-    assert(Library and Library.Holder, "[MidnightBanner] passe a Library como 1º argumento")
+    assert(Library and Library.Holder, "[MidnightBanner] pass the Library as the 1st argument")
     Config = Config or {}
 
     local self = setmetatable({}, MidnightBanner)
@@ -2700,7 +2751,7 @@ function MidnightBanner.new(Library, Window, Config)
     self.Hovering = false
     self.Elapsed = 0
     self.Connections = {}
-    assert(#self.Slides > 0, "[MidnightBanner] adicione pelo menos 1 slide")
+    assert(#self.Slides > 0, "[MidnightBanner] add at least 1 slide")
 
     local Target
     if typeof(Window) == "Instance" then
@@ -2708,7 +2759,7 @@ function MidnightBanner.new(Library, Window, Config)
     elseif type(Window) == "table" and Window.Items and Window.Items.MainFrame then
         Target = Window.Items.MainFrame.Instance or Window.Items.MainFrame
     end
-    assert(Target, "[MidnightBanner] passe a Window da lib (ou um GuiObject) como 2º argumento")
+    assert(Target, "[MidnightBanner] pass the lib Window (or a GuiObject) as the 2nd argument")
     self.Target = Target
 
     local Theme = Library.Theme
@@ -3122,7 +3173,7 @@ function MidnightBanner.new(Library, Window, Config)
         IconStroke.Color = Color
         self:_SetBackground(Slide)
         P.Sub.Text = tostring(Slide.Text or "")
-        P.Action.Text = tostring(Slide.Button or "Abrir")
+        P.Action.Text = tostring(Slide.Button or "Open")
         P.Action.BackgroundColor3 = Color
         P.Strip.BackgroundColor3 = Color
         for _, ArcStroke in ipairs(EdgeArcs) do ArcStroke.Color = Color end
@@ -3194,7 +3245,7 @@ function MidnightBanner.new(Library, Window, Config)
         if Library.Notify then
             Library:Notify({
                 Title = tostring(Slide.Title or "Link"),
-                Content = (Opened and "Abrindo no Discord... " or "") .. (Copied and "Link copiado para a área de transferência!" or ("Link: " .. Slide.Link)),
+                Content = (Opened and "Opening in Discord... " or "") .. (Copied and "Link copied to clipboard!" or ("Link: " .. Slide.Link)),
                 Duration = 4,
                 Type = "NEW"
             })
@@ -3222,7 +3273,7 @@ function MidnightBanner.new(Library, Window, Config)
 
     local ShownState = nil
     local LastLayout = {}
-    -- só escreve a propriedade quando o valor muda (o loop roda todo frame)
+    -- only write the property when the value changes (the loop runs every frame)
     local function SetIfChanged(Inst, Key, Property, Value)
         if LastLayout[Key] ~= Value then
             LastLayout[Key] = Value
@@ -3246,7 +3297,7 @@ function MidnightBanner.new(Library, Window, Config)
             end
         end
 
-        -- banner escondido (janela fechada ou X): nada pra animar nem posicionar neste frame
+        -- banner hidden (window closed or X): nothing to animate or position this frame
         if not ShouldShow and not Root.Visible then return end
 
         UpdateWave()
@@ -3358,8 +3409,16 @@ return MidnightBanner
             Banner = false
         }
 
+        -- Element -> search entry, so SetText on labels/paragraphs/progress finds its entry in O(1)
+        -- (it used to scan the whole list on every call, which adds up for labels updated every frame)
+        local EntryByElement = {}
+
+        function Window:FindEntry(Element)
+            return EntryByElement[Element]
+        end
+
         function Window:RegisterElement(Element, Type, Name, Section, Page, Api, Badge)
-            TableInsert(self.SearchableElements, {
+            local Entry = {
                 Element = Element,
                 Type = Type,
                 Name = Name,
@@ -3369,14 +3428,26 @@ return MidnightBanner
                 SubTab = Section and Section.SubTab or nil,
                 Api = Api,
                 Badge = Badge and StringFind(tostring(Badge), "%S") and tostring(Badge):upper() or nil
-            })
+            }
+            TableInsert(self.SearchableElements, Entry)
+            EntryByElement[Element] = Entry
         end
 
         function Window:UnregisterElement(Element)
+            EntryByElement[Element] = nil
             for Index = #self.SearchableElements, 1, -1 do
                 if self.SearchableElements[Index].Element == Element then
                     TableRemove(self.SearchableElements, Index)
                 end
+            end
+        end
+
+        -- rename an element in the search (used by SetText)
+        function Window:RenameEntry(Element, Name)
+            local Entry = EntryByElement[Element]
+            if Entry then
+                Entry.Name = Name
+                Entry.SearchName = StringLower(Name)
             end
         end
 
@@ -3651,7 +3722,7 @@ return MidnightBanner
             end
 
             Window:SetDescription(
-                Data.Description or Data.description or "Pressione Ctrl+F para procurar qualquer função.",
+                Data.Description or Data.description or "Press Ctrl+F to search for any feature.",
                 Data.DescriptionTitle or Data.descriptiontitle
             )
 
@@ -3766,11 +3837,11 @@ return MidnightBanner
 
             local TypeTags = {
                 toggle = "TGL", button = "BTN", slider = "SLD", dropdown = "DRP", input = "INP",
-                keybind = "KEY", colorpicker = "COR", paragraph = "TXT", label = "LBL"
+                keybind = "KEY", colorpicker = "COR", paragraph = "TXT", label = "LBL", progress = "PRG"
             }
             local Aliases = {
                 ws = "walkspeed", jp = "jumppower", spd = "speed", tp = "teleport",
-                fly = "voar", nc = "noclip", cfg = "config", cod = "codigos", codigo = "codigos"
+                nc = "noclip", cfg = "config", inf = "infinite"
             }
             Search.Aliases = Aliases
 
@@ -3779,7 +3850,7 @@ return MidnightBanner
                 ["Á"]="a",["À"]="a",["Â"]="a",["Ã"]="a",["É"]="e",["Ê"]="e",["Í"]="i",["Ó"]="o",["Ô"]="o",["Õ"]="o",["Ú"]="u",["Ç"]="c"
             }
 
-            -- cache do texto normalizado: a busca roda a cada tecla e normalizava todos os nomes de novo
+            -- normalized text cache: search runs on every keystroke and used to re-normalize every name
             local NormalizeCache, NormalizeCount = {}, 0
             local function SearchNormalize(s)
                 s = tostring(s or "")
@@ -3929,7 +4000,7 @@ return MidnightBanner
                 Size = UDim2New(1, -66, 1, 0),
                 BackgroundTransparency = 1,
                 Text = "",
-                PlaceholderText = "Procurar função...",
+                PlaceholderText = "Search feature...",
                 PlaceholderColor3 = MUTED,
                 TextColor3 = Library.Theme.Text,
                 FontFace = Library.Font,
@@ -3996,7 +4067,7 @@ return MidnightBanner
                 Position = UDim2New(0, 58, 0, 15),
                 Size = UDim2New(1, -170, 0, 22),
                 BackgroundTransparency = 1,
-                Text = "Buscar funções",
+                Text = "Search features",
                 TextColor3 = Library.Theme.Text,
                 FontFace = (function()
                     local Ok, Bold = pcall(function() return Font.new(Library.Font.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal) end)
@@ -4041,7 +4112,7 @@ return MidnightBanner
                 Size = UDim2New(0, 0, 1, 0),
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
-                Text = "Fechar",
+                Text = "Close",
                 TextColor3 = Library.Theme.Text,
                 TextTransparency = 0.5,
                 FontFace = Library.Font,
@@ -4166,7 +4237,7 @@ return MidnightBanner
                 Instances:Create("UICorner", { Parent = Row.Switch, CornerRadius = UDimNew(1, 0) })
                 Row.Knob = Instances:Create("Frame", { Parent = Row.Switch, AnchorPoint = Vector2New(0, 0.5), Position = UDim2New(0, 4, 0.5, 0), Size = UDim2New(0, 10, 0, 10), BackgroundColor3 = FromRGB(255, 255, 255), BorderSizePixel = 0, ZIndex = SZ + 5 }).Instance
                 Instances:Create("UICorner", { Parent = Row.Knob, CornerRadius = UDimNew(1, 0) })
-                Row.Run = Instances:Create("TextButton", { Parent = Row.Control, LayoutOrder = 2, Size = UDim2New(0, 0, 0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = Library.Theme.Background, Text = "Executar", TextColor3 = Library.Theme.Text, TextTransparency = 0.15, FontFace = Library.Font, TextSize = 12, AutoButtonColor = false, ZIndex = SZ + 4 }).Instance
+                Row.Run = Instances:Create("TextButton", { Parent = Row.Control, LayoutOrder = 2, Size = UDim2New(0, 0, 0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = Library.Theme.Background, Text = "Run", TextColor3 = Library.Theme.Text, TextTransparency = 0.15, FontFace = Library.Font, TextSize = 12, AutoButtonColor = false, ZIndex = SZ + 4 }).Instance
                 Instances:Create("UICorner", { Parent = Row.Run, CornerRadius = UDimNew(0, 6) })
                 Instances:Create("UIPadding", { Parent = Row.Run, PaddingLeft = UDimNew(0, 12), PaddingRight = UDimNew(0, 12) })
                 Instances:Create("UIStroke", { Parent = Row.Run, Color = Library.Theme.Outline, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }):AddToTheme({Color = 'Outline'})
@@ -4190,7 +4261,7 @@ return MidnightBanner
                     if type(Api.Value) == "table" then
                         local Count = 0
                         for _, On in pairs(Api.Value) do if On then Count += 1 end end
-                        return Count .. " selec."
+                        return Count .. " selected"
                     end
                     return Api.Value ~= nil and tostring(Api.Value) or "-"
                 elseif Kind == "input" then
@@ -4198,10 +4269,12 @@ return MidnightBanner
                     return V == "" and "-" or V
                 elseif Kind == "keybind" then
                     local KB = Api.KB
-                    return KB and ((KB.Value ~= nil and KB.Value ~= "" and KB.Value ~= "None") and KB.Value or "Nenhuma") or ""
+                    return KB and ((KB.Value ~= nil and KB.Value ~= "" and KB.Value ~= "None") and KB.Value or "None") or ""
                 elseif Kind == "colorpicker" then
                     local CP = Api.CP
                     return CP and CP.HexValue and ("#" .. tostring(CP.HexValue):upper()) or ""
+                elseif Kind == "progress" then
+                    return Api.DisplayText or ""
                 end
                 return ""
             end
@@ -4209,7 +4282,7 @@ return MidnightBanner
             local TypeIcons = {
                 toggle = "toggle-right", button = "mouse-pointer-click", slider = "sliders-horizontal",
                 dropdown = "list", input = "text-cursor-input", keybind = "keyboard",
-                colorpicker = "palette", paragraph = "align-left", label = "type"
+                colorpicker = "palette", paragraph = "align-left", label = "type", progress = "loader"
             }
             local TypeIconCache = {}
             local function TypeIcon(Kind)
@@ -4291,8 +4364,8 @@ return MidnightBanner
                 end
             end
             for Order, Def in ipairs({
-                {"Tudo", nil, false, "layout-grid"}, {"Toggles", "toggle", false, "toggle-right"}, {"Botões", "button", false, "mouse-pointer-click"},
-                {"Sliders", "slider", false, "sliders-horizontal"}, {"Listas", "dropdown", false, "list"}, {"Favoritos", nil, true, "star"}
+                {"All", nil, false, "layout-grid"}, {"Toggles", "toggle", false, "toggle-right"}, {"Buttons", "button", false, "mouse-pointer-click"},
+                {"Sliders", "slider", false, "sliders-horizontal"}, {"Lists", "dropdown", false, "list"}, {"Favorites", nil, true, "star"}
             }) do
                 local Button = Instances:Create("TextButton", {
                     Parent = ChipBar.Instance,
@@ -4396,14 +4469,14 @@ return MidnightBanner
                         end
                     end
                     if #Favs > 0 then
-                        TableInsert(Display, {Group = "FAVORITOS"})
+                        TableInsert(Display, {Group = "FAVORITES"})
                         for _, E in ipairs(Favs) do TableInsert(Display, {Entry = E}) end
                     end
                     if #Recents > 0 then
-                        TableInsert(Display, {Group = "USADOS RECENTEMENTE"})
+                        TableInsert(Display, {Group = "RECENTLY USED"})
                         for _, E in ipairs(Recents) do TableInsert(Display, {Entry = E}) end
                     end
-                    ViewSub.Instance.Text = StringFormat("%d funções nesta janela  ·  digite para procurar", #Entries)
+                    ViewSub.Instance.Text = StringFormat("%d features in this window  ·  type to search", #Entries)
                 else
                     local Found = {}
                     for _, E in ipairs(Entries) do
@@ -4440,9 +4513,9 @@ return MidnightBanner
                     end
 
                     if Query ~= "" then
-                        ViewSub.Instance.Text = StringFormat('%d resultado(s) para <font color="#%s">"%s"</font>', #Found, Library.Theme.Accent:ToHex(), SearchEscape(Query))
+                        ViewSub.Instance.Text = StringFormat('%d result(s) for <font color="#%s">"%s"</font>', #Found, Library.Theme.Accent:ToHex(), SearchEscape(Query))
                     else
-                        ViewSub.Instance.Text = StringFormat("%d resultado(s)", #Found)
+                        ViewSub.Instance.Text = StringFormat("%d result(s)", #Found)
                     end
                 end
 
@@ -4453,11 +4526,11 @@ return MidnightBanner
                 EmptyLabel.Visible = RowCount == 0
                 if RowCount == 0 then
                     if Home then
-                        EmptyLabel.Text = "Comece a digitar o nome de uma função.\n\nDica: ☆ favorita um resultado, e ele aparece aqui."
+                        EmptyLabel.Text = "Start typing a feature name.\n\nTip: ☆ favorites a result, and it shows up here."
                     elseif Search.FavoritesOnly then
-                        EmptyLabel.Text = "Nenhum favorito encontrado.\nClique na ☆ de um resultado para favoritar."
+                        EmptyLabel.Text = "No favorites found.\nClick the ☆ on a result to favorite it."
                     else
-                        EmptyLabel.Text = "Nada encontrado.\n\nTente sem acentos, uma abreviação (ws, jp, tp, fly)\nou tire os filtros (#toggle, @risk, >Página)."
+                        EmptyLabel.Text = "Nothing found.\n\nTry an abbreviation (ws, jp, tp, nc)\nor remove the filters (#toggle, @risk, >Page)."
                     end
                 end
                 Render()
@@ -4613,7 +4686,7 @@ return MidnightBanner
                 PushRecent(E.key)
 
                 if not ForceGoTo and d.Api and d.Api.Locked and (d.Kind == "toggle" or d.Kind == "button") then
-                    Library:Notify({Title = d.Name, Content = d.Api.LockReason or "Esta função está bloqueada no momento.", Duration = 3})
+                    Library:Notify({Title = d.Name, Content = d.Api.LockReason or "This feature is locked right now.", Duration = 3})
                     return
                 elseif not ForceGoTo and d.Kind == "toggle" and d.Api then
                     d.Api:Set(not d.Api.Value)
@@ -4910,7 +4983,7 @@ return MidnightBanner
                 Header.LayoutOrder = 1
                 Header.Parent = Root
                 Label({Parent = Header, Size = UDim2New(1, -34, 0, 20), Text = "Badges", FontFace = GetBoldFontSafe(), TextSize = 17})
-                Label({Parent = Header, Position = UDim2New(0, 0, 0, 22), Size = UDim2New(1, -34, 0, 16), Text = "O que cada etiqueta das funções significa.", TextSize = 12, TextTransparency = 0.5})
+                Label({Parent = Header, Position = UDim2New(0, 0, 0, 22), Size = UDim2New(1, -34, 0, 16), Text = "What each feature tag means.", TextSize = 12, TextTransparency = 0.5})
                 local Close = InstanceNew("TextButton")
                 Close.AnchorPoint = Vector2New(1, 0)
                 Close.Position = UDim2New(1, 0, 0, 0)
@@ -4997,14 +5070,14 @@ return MidnightBanner
                         Dot.BorderSizePixel = 0
                         Dot.Parent = TitleRow
                         InstanceNew("UICorner", Dot).CornerRadius = UDimNew(1, 0)
-                        Label({Parent = TitleRow, LayoutOrder = 3, Size = UDim2New(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, Text = "Risco " .. StringLower(RiskText(Info.Level)), TextSize = 12, TextTransparency = 0.45, TextYAlignment = Enum.TextYAlignment.Center})
+                        Label({Parent = TitleRow, LayoutOrder = 3, Size = UDim2New(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, Text = RiskText(Info.Level) .. " risk", TextSize = 12, TextTransparency = 0.45, TextYAlignment = Enum.TextYAlignment.Center})
                     end
                     local Desc = Label({
                         Parent = Row,
                         Position = UDim2New(0, 56, 0, 20),
                         Size = UDim2New(1, -56, 0, 0),
                         AutomaticSize = Enum.AutomaticSize.Y,
-                        Text = (Type == "INFO" and "Explica o que a função faz. Clique no badge para ler a explicação completa.") or BadgeDescriptions[Type] or "",
+                        Text = (Type == "INFO" and "Explains what the feature does. Click the badge to read the full explanation.") or BadgeDescriptions[Type] or "",
                         TextSize = 12,
                         TextTransparency = 0.45,
                         TextWrapped = true
@@ -5082,13 +5155,13 @@ return MidnightBanner
         function Window:AddConfigPage()
             if not self or not self.Items then return end
 
-            local ConfigPage = self:AddPage({Name = "Config", Icon = "settings-2", Description = "Interface, atalhos e configurações", IsConfig = true})
+            local ConfigPage = self:AddPage({Name = "Config", Icon = "settings-2", Description = "Interface, shortcuts and settings", IsConfig = true})
 
             local GuiSec = ConfigPage:AddSection({Name = "Interface"})
 
             local ScalePending = false
             GuiSec:AddSlider({
-                Name = "Tamanho da UI",
+                Name = "UI Size",
                 Min = 50,
                 Max = 150,
                 Default = (Window.InitialScale or 1) * 100,
@@ -5109,10 +5182,10 @@ return MidnightBanner
                 end
             })
 
-            local MobileSec = ConfigPage:AddSection({Name = "Botão mobile"})
+            local MobileSec = ConfigPage:AddSection({Name = "Mobile button"})
             MobileSec:AddToggle({
-                Name = "Mostrar botão mobile",
-                Description = "Botão flutuante que abre e fecha a janela.",
+                Name = "Show mobile button",
+                Description = "Floating button that opens and closes the window.",
                 Default = true,
                 Flag = "UI_Mobile_Visible",
                 Callback = function(Value)
@@ -5120,8 +5193,8 @@ return MidnightBanner
                 end
             })
             MobileSec:AddSlider({
-                Name = "Tamanho do botão mobile",
-                Description = "Aumenta ou diminui o botão flutuante e o STOP HOP.",
+                Name = "Mobile button size",
+                Description = "Makes the floating button and STOP HOP bigger or smaller.",
                 Min = 50,
                 Max = 150,
                 Default = 100,
@@ -5133,8 +5206,8 @@ return MidnightBanner
             })
 
             GuiSec:AddToggle({
-                Name = "Mostrar dica na lateral",
-                Description = "Desligado, a dica some e a lista de páginas ocupa o espaço dela.",
+                Name = "Show sidebar tip",
+                Description = "When off, the tip is hidden and the page list takes its space.",
                 Default = true,
                 Flag = "UI_Show_Description",
                 Callback = function(Value)
@@ -5142,19 +5215,19 @@ return MidnightBanner
                 end
             })
 
-            local ShareSec = ConfigPage:AddSection({Name = "Configurações"})
+            local ShareSec = ConfigPage:AddSection({Name = "Settings"})
 
             ShareSec:AddParagraph({
-                Title = "Auto-Save Automático",
-                Content = "• Suas alterações são salvas automaticamente a cada clique.\n• O carregamento do arquivo local ocorre sozinho ao iniciar o script.\n• Você também pode definir getgenv().MidnightConfig antes de executar a lib.",
+                Title = "Auto-Save",
+                Content = "• Your changes are saved automatically on every click.\n• The local file is loaded automatically when the script starts.\n• You can also set getgenv().MidnightConfig before running the lib.",
                 Icon = "settings-2"
             })
 
             ShareSec:AddButton({
-                Name = "Copiar Configuração (Luau)",
+                Name = "Copy Config (Luau)",
                 Callback = function()
                     if not setclipboard then
-                        Library:Notify({Title = "Não Suportado", Content = "Seu executor não suporta copiar para a área de transferência.", Duration = 4, Type = "RISK"})
+                        Library:Notify({Title = "Not Supported", Content = "Your executor does not support copying to the clipboard.", Duration = 4, Type = "RISK"})
                         return
                     end
 
@@ -5192,43 +5265,43 @@ return MidnightBanner
                     local ok, err = pcall(setclipboard, luauScript)
                     if ok then
                         Library:Notify({
-                            Title = "Copiado",
-                            Content = "Código de configuração universal Luau copiado para o clipboard!",
+                            Title = "Copied",
+                            Content = "Universal Luau config code copied to the clipboard!",
                             Duration = 4,
                             Type = "SAFE"
                         })
                     else
-                        Library:Notify({Title = "Erro", Content = "Falha ao copiar: " .. tostring(err), Duration = 4, Type = "BUG"})
+                        Library:Notify({Title = "Error", Content = "Failed to copy: " .. tostring(err), Duration = 4, Type = "BUG"})
                     end
                 end
             })
 
-            local GuiSec = ConfigPage:AddSection({Name = "Atalho do Menu"})
+            local GuiSec = ConfigPage:AddSection({Name = "Menu Shortcut"})
 
             local ReSec = ConfigPage:AddSection({Name = "Auto Re-Execute"})
 
             ReSec:AddParagraph({
                 Title = "Auto Re-Execute",
-                Content = "Re-executa o script automaticamente após algum teleport.",
+                Content = "Automatically re-runs the script after a teleport.",
                 Icon = "refresh-cw"
             })
 
             ReSec:AddToggle({
-                Name = "Re-executar após Teleporte",
+                Name = "Re-execute after Teleport",
                 Flag = "UI_Auto_Reexecute",
                 Default = false,
                 Callback = function(Value)
                     if Value and Library.AutoExecuteScript == "" then
                         Library:Notify({
                             Title = "Auto Re-Execute",
-                            Content = "Nenhum script configurado. Defina ReExecute na criação da janela.",
+                            Content = "No script configured. Set ReExecute when creating the window.",
                             Duration = 5,
                             Type = "BUG"
                         })
                     elseif Value then
                         Library:Notify({
                             Title = "Auto Re-Execute",
-                            Content = "Ativado! O script será re-executado após teleportes.",
+                            Content = "Enabled! The script will re-run after teleports.",
                             Duration = 4,
                             Type = "SAFE"
                         })
@@ -5252,27 +5325,27 @@ return MidnightBanner
                 end
             })
 
-            local ResetSec = ConfigPage:AddSection({Name = "Resetar"})
+            local ResetSec = ConfigPage:AddSection({Name = "Reset"})
             ResetSec:AddParagraph({
-                Title = "Voltar ao padrão de fábrica",
+                Title = "Factory reset",
                 Type = "Danger",
-                Content = "Desliga todas as funções ativas e volta sliders, listas e campos para o valor original. As opções desta página Config continuam como estão."
+                Content = "Turns off every active feature and returns sliders, lists and fields to their original value. The options on this Config page stay as they are."
             })
             local ResetArmedAt = 0
             ResetSec:AddButton({
-                Name = "Resetar script",
+                Name = "Reset script",
                 Badge = "INFO",
-                BadgeDescription = "Volta o script ao padrão de fábrica: desliga todos os toggles ligados (inclusive os auto hops) e devolve sliders, listas, menus de seleção, campos de texto, teclas e cores ao valor original. As opções da página Config (tamanho da UI, botão mobile e tecla do menu) e as funções bloqueadas não são alteradas. Para evitar acidentes, é preciso clicar duas vezes seguidas, em até 3 segundos.",
-                Description = "Clique duas vezes seguidas para confirmar.",
+                BadgeDescription = "Factory resets the script: turns off every enabled toggle (auto hops included) and returns sliders, lists, select menus, text fields, keys and colors to their original value. The Config page options (UI size, mobile button and menu key) and locked features are not changed. To avoid accidents, you have to click twice in a row, within 3 seconds.",
+                Description = "Click twice in a row to confirm.",
                 Callback = function()
                     if os.clock() - ResetArmedAt > 3 then
                         ResetArmedAt = os.clock()
-                        Library:Notify({Title = "Resetar script", Content = "Clique de novo em até 3 segundos para confirmar.", Duration = 3, Type = "RISK"})
+                        Library:Notify({Title = "Reset script", Content = "Click again within 3 seconds to confirm.", Duration = 3, Type = "RISK"})
                         return
                     end
                     ResetArmedAt = 0
                     local Count = Window:ResetFunctions()
-                    Library:Notify({Title = "Script resetado", Content = Count .. " funções voltaram ao padrão de fábrica.", Duration = 4, Type = "SAFE"})
+                    Library:Notify({Title = "Script reset", Content = Count .. " features were reset to default.", Duration = 4, Type = "SAFE"})
                 end
             })
         end
@@ -5410,7 +5483,7 @@ return MidnightBanner
                 elseif typeof(syn) == "table" and syn.queue_on_teleport then
                     syn.queue_on_teleport(Library.AutoExecuteScript)
                 else
-                    Library:Notify({Title = "Auto Re-Execute", Content = "Seu executor não suporta queue_on_teleport.", Duration = 5, Type = "BUG"})
+                    Library:Notify({Title = "Auto Re-Execute", Content = "Your executor does not support queue_on_teleport.", Duration = 5, Type = "BUG"})
                 end
             end
         end)
@@ -5422,7 +5495,13 @@ return MidnightBanner
         end)
 
         Library:Connect(UserInputService.InputBegan, function(Input, GameProcessed)
-            if GameProcessed then return end
+            -- Picking a new key: don't open/close the menu with that same key press
+            if Library.KeybindPicking then return end
+            -- Typing in a TextBox: ignore
+            if UserInputService:GetFocusedTextBox() then return end
+            -- Keyboard: the game may mark Ctrl/Shift/Alt as "processed" (crouch, sprint...),
+            -- so GameProcessed is only respected for mouse/touch
+            if GameProcessed and Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
             local activeKey = Library.ToggleKey
             local bindFlag = Library.Flags["UI_Menu_Toggle_Bind"]
@@ -5443,14 +5522,14 @@ return MidnightBanner
             Window.Banner = false
             if type(BannerConfig) ~= "table" or BannerConfig.Enabled == false then return nil end
             if type(BannerConfig.Slides) ~= "table" or #BannerConfig.Slides == 0 then
-                warn("[MidnightLib] Banner sem slides: adicione Slides = { {...} }")
+                warn("[MidnightLib] Banner has no slides: add Slides = { {...} }")
                 return nil
             end
             local Ok, Result = pcall(MidnightBanner.new, Library, Window, BannerConfig)
             if Ok then
                 Window.Banner = Result
             else
-                warn("[MidnightLib] Erro ao criar o banner: " .. tostring(Result))
+                warn("[MidnightLib] Error creating the banner: " .. tostring(Result))
             end
             return Window.Banner or nil
         end
@@ -5502,7 +5581,7 @@ return MidnightBanner
                 end
                 Library:SaveAutosave()
                 Library:SafeCall(Config.Callback)
-                Library:Notify({Title = "Server Hop", Content = "Todos os auto hops foram desligados.", Duration = 4, Type = "SAFE"})
+                Library:Notify({Title = "Server Hop", Content = "All auto hops were turned off.", Duration = 4, Type = "SAFE"})
             end
 
             local Button = Instances:Create("TextButton", {
@@ -5683,7 +5762,7 @@ return MidnightBanner
             Library:Connect(RunService.RenderStepped, function()
                 local T = os.clock() - Started
                 local Floating = Window.MinimizeLogo
-                -- a animação depende só do relógio, então pular enquanto está escondido não muda nada ao reabrir
+                -- the animation only depends on the clock, so skipping it while hidden changes nothing when reopened
                 if MainFrame.Visible then
                     for _, Part in ipairs(Parts) do
                         local Wave = (1 - math.cos((T / Period - Part.Delay) * math.pi * 2)) / 2
@@ -5701,7 +5780,7 @@ return MidnightBanner
         return Window
     end
 
-    -- mesma fonte de sempre, só que criada uma vez (os títulos de seção/página chamam isso muitas vezes)
+    -- same font as always, just created once (section/page titles call this many times)
     local BoldFontCache
     local function GetBoldFont()
         if BoldFontCache then return BoldFontCache end
@@ -6324,10 +6403,10 @@ return MidnightBanner
 
             local MAX_SUBTABS = 20
             if #self.SubTabs >= MAX_SUBTABS then
-                warn("⚠️ Limite de sub-abas atingido (" .. MAX_SUBTABS .. ")!")
+                warn("⚠️ Sub-tab limit reached (" .. MAX_SUBTABS .. ")!")
                 Library:Notify({
-                    Title = "Limite de sub-abas",
-                    Content = "A página \"" .. tostring(self.Name) .. "\" já atingiu o limite de " .. MAX_SUBTABS .. " sub-abas.",
+                    Title = "Sub-tab limit",
+                    Content = "The page \"" .. tostring(self.Name) .. "\" already reached the limit of " .. MAX_SUBTABS .. " sub-tabs.",
                     Duration = 5,
                     Type = "BUG"
                 })
@@ -6532,8 +6611,31 @@ return MidnightBanner
         if Solid then MarginX, MarginY = 0, 0 end
         local AutoY = Target.AutomaticSize == Enum.AutomaticSize.Y or Target.AutomaticSize == Enum.AutomaticSize.XY
         if AutoY then MarginY = 0 end
+        local CornerRadius = (Solid and TargetCorner and TargetCorner.CornerRadius) or UDimNew(0, Solid and 8 or 6)
 
-        local Overlay = Instances:Create("TextButton", {
+        -- the overlay is only built the first time the element gets locked
+        -- (most elements are never locked, so they skip 4 instances and 3 connections each)
+        local Overlay, IconInst, IsImage, IconScale
+        local Locked, Hovering = false, false
+        local REST, HOVER = 0.35, 0
+
+        local function PaintIcon()
+            if not Overlay then return end
+            local Info = TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+            local Transparency = not Locked and 1 or (Hovering and HOVER or REST)
+            local Color = Hovering and Library.Theme.Accent or Library.Theme.Text
+            if IsImage then
+                IconInst.Image = (Hovering and OpenIcon) or LockIcon
+                TweenService:Create(IconInst, Info, {ImageTransparency = Transparency, ImageColor3 = Color}):Play()
+            else
+                TweenService:Create(IconInst, Info, {TextTransparency = Transparency, TextColor3 = Color}):Play()
+            end
+            TweenService:Create(IconScale.Instance, Info, {Scale = Hovering and 1.15 or 1}):Play()
+        end
+
+        local function Build()
+        if Overlay or not Target.Parent then return Overlay end
+        Overlay = Instances:Create("TextButton", {
             Parent = Target,
             Name = "\0",
             Size = UDim2New(1, PadLeft + PadRight + MarginX * 2, 1, PadTop + PadBottom + MarginY * 2),
@@ -6546,7 +6648,7 @@ return MidnightBanner
             Visible = false,
             ZIndex = 8
         }):AddToTheme({BackgroundColor3 = Solid and "Element" or "Inline"})
-        Instances:Create("UICorner", { Parent = Overlay.Instance, CornerRadius = (Solid and TargetCorner and TargetCorner.CornerRadius) or UDimNew(0, Solid and 8 or 6) })
+        Instances:Create("UICorner", { Parent = Overlay.Instance, CornerRadius = CornerRadius })
 
         local Icon
         if LockIcon then
@@ -6570,7 +6672,7 @@ return MidnightBanner
                 Size = UDim2New(0, 0, 0, 16),
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
-                Text = "Bloqueado",
+                Text = "Locked",
                 TextColor3 = Library.Theme.Text,
                 TextTransparency = 1,
                 FontFace = Library.Font,
@@ -6578,24 +6680,9 @@ return MidnightBanner
                 ZIndex = 10
             }):AddToTheme({TextColor3 = "Text"})
         end
-        local IconInst = Icon.Instance
-        local IsImage = IconInst:IsA("ImageLabel")
-        local IconScale = Instances:Create("UIScale", { Parent = IconInst, Scale = 1 })
-
-        local Locked, Hovering = false, false
-        local REST, HOVER = 0.35, 0
-        local function PaintIcon()
-            local Info = TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-            local Transparency = not Locked and 1 or (Hovering and HOVER or REST)
-            local Color = Hovering and Library.Theme.Accent or Library.Theme.Text
-            if IsImage then
-                IconInst.Image = (Hovering and OpenIcon) or LockIcon
-                TweenService:Create(IconInst, Info, {ImageTransparency = Transparency, ImageColor3 = Color}):Play()
-            else
-                TweenService:Create(IconInst, Info, {TextTransparency = Transparency, TextColor3 = Color}):Play()
-            end
-            TweenService:Create(IconScale.Instance, Info, {Scale = Hovering and 1.15 or 1}):Play()
-        end
+        IconInst = Icon.Instance
+        IsImage = IconInst:IsA("ImageLabel")
+        IconScale = Instances:Create("UIScale", { Parent = IconInst, Scale = 1 })
 
         Overlay:Connect("MouseEnter", function() Hovering = true; PaintIcon() end)
         Overlay:Connect("MouseLeave", function() Hovering = false; PaintIcon() end)
@@ -6605,15 +6692,20 @@ return MidnightBanner
             if os.clock() - LastNotify < 1.5 then return end
             LastNotify = os.clock()
             Library:Notify({
-                Title = tostring(Element.Name or "Função bloqueada"),
-                Content = Element.LockReason or "Esta função está bloqueada no momento.",
+                Title = tostring(Element.Name or "Locked feature"),
+                Content = Element.LockReason or "This feature is locked right now.",
                 Duration = 3
             })
         end)
+        return Overlay
+        end
 
         local Lock = {}
         function Lock:Set(Bool)
             Locked = Bool == true
+            -- never locked and staying unlocked: nothing to show
+            if not Overlay and not Locked then return end
+            if not Build() then return end
             Overlay.Instance.Visible = true
             TweenService:Create(Overlay.Instance, TweenInfo.new(0.2), {BackgroundTransparency = Locked and 0.3 or 1}):Play()
             PaintIcon()
@@ -6823,6 +6915,7 @@ return MidnightBanner
             KeyButton:Connect("MouseButton1Click", function()
                 if Toggle.Locked then return end
                 Keybind.Picking = true
+                Library.KeybindPicking = true
                 SetKeycap(KeyButton, KeyStroke, "...")
                 local Connection
                 Connection = UserInputService.InputBegan:Connect(function(Input)
@@ -6837,6 +6930,7 @@ return MidnightBanner
                     end
                     Keybind.Picking = false
                     Connection:Disconnect()
+                    task.defer(function() Library.KeybindPicking = false end)
                 end)
             end)
 
@@ -6845,7 +6939,8 @@ return MidnightBanner
                 if Keybind.Value == "None" or Keybind.Value == "" or Keybind.Picking then return end
                 if Toggle.Locked or Toggle.Destroyed then return end
                 local targetInput = tostring(Input.KeyCode) == Keybind.Key or tostring(Input.UserInputType) == Keybind.Key
-                if targetInput and not GameProcessed then
+                local Allowed = not GameProcessed or (Input.UserInputType == Enum.UserInputType.Keyboard and not UserInputService:GetFocusedTextBox())
+                if targetInput and Allowed then
                     Toggle:Set(not Toggle.Value)
                     Library:SafeCall(KBCallback, Toggle.Value)
                 end
@@ -7290,7 +7385,7 @@ return MidnightBanner
             Position = UDim2New(0, 8, 0, 0),
             BackgroundTransparency = 1,
             Text = "",
-            PlaceholderText = "Pesquisar item...",
+            PlaceholderText = "Search item...",
             PlaceholderColor3 = FromRGB(120, 120, 130),
             TextColor3 = Library.Theme.Text,
             FontFace = Library.Font,
@@ -7570,7 +7665,7 @@ return MidnightBanner
         local Input = {
             Section = self,
             Name = Data.Name or "Input",
-            Placeholder = Data.Placeholder or "Digite algo...",
+            Placeholder = Data.Placeholder or "Type something...",
             Default = Data.Default or "",
             Flag = Data.Flag or Library:NextFlag(),
             Callback = Data.Callback or function() end,
@@ -7746,7 +7841,7 @@ return MidnightBanner
             Callback = Data.Callback or function() end,
             Multi = Data.Multi == true,
             Mode = Data.Mode or "Popover",
-            Placeholder = Data.Placeholder or "Selecionar",
+            Placeholder = Data.Placeholder or "Select",
             Locked = Data.Lock or false,
             LockReason = Data.LockReason,
             IsOpen = false
@@ -8010,7 +8105,7 @@ return MidnightBanner
                 SearchBox.Position = UDim2New(0, SearchIcon and 28 or 10, 0, 0)
                 SearchBox.Size = UDim2New(1, SearchIcon and -37 or -20, 1, 0)
                 SearchBox.Text = ""
-                SearchBox.PlaceholderText = "Pesquisar..."
+                SearchBox.PlaceholderText = "Search..."
                 SearchBox.PlaceholderColor3 = FromRGB(120, 120, 130)
                 SearchBox.TextColor3 = Theme.Text
                 SearchBox.FontFace = Library.Font
@@ -8125,7 +8220,7 @@ return MidnightBanner
 
             local Empty
             if #Entries == 0 or ShowSearch then
-                Empty = Label({Parent = List, LayoutOrder = 99999, Size = UDim2New(1, 0, 0, 34), Text = "Nada encontrado", TextSize = 13, TextTransparency = 0.55, TextXAlignment = Enum.TextXAlignment.Center, Visible = #Entries == 0})
+                Empty = Label({Parent = List, LayoutOrder = 99999, Size = UDim2New(1, 0, 0, 34), Text = "Nothing found", TextSize = 13, TextTransparency = 0.55, TextXAlignment = Enum.TextXAlignment.Center, Visible = #Entries == 0})
             end
 
             local PopoverRoom
@@ -8372,8 +8467,8 @@ return MidnightBanner
         Data = Data or {}
         local Paragraph = {
             Section = self,
-            Title = Data.Title or Data.Name or "Aviso",
-            Content = Data.Content or Data.Text or "Texto explicativo...",
+            Title = Data.Title or Data.Name or "Notice",
+            Content = Data.Content or Data.Text or "Explanation text...",
             Style = Data.Style or "Default",
             Type = Data.Type
         }
@@ -8510,7 +8605,7 @@ return MidnightBanner
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundColor3 = Color(),
                 BackgroundTransparency = 0.8,
-                Text = tostring(Data.Button.Name or Data.Button.Text or "Abrir"),
+                Text = tostring(Data.Button.Name or Data.Button.Text or "Open"),
                 TextColor3 = Color(),
                 FontFace = Library.Font,
                 TextSize = 13,
@@ -8529,12 +8624,7 @@ return MidnightBanner
         function Paragraph:SetTitle(Text)
             Paragraph.Title = tostring(Text or "")
             Items["TitleLabel"].Instance.Text = Paragraph.Title
-            for _, Entry in ipairs(Paragraph.Section.Window.SearchableElements) do
-                if Entry.Element == Main then
-                    Entry.Name = Paragraph.Title
-                    Entry.SearchName = StringLower(Paragraph.Title)
-                end
-            end
+            Paragraph.Section.Window:RenameEntry(Main, Paragraph.Title)
         end
 
         function Paragraph:SetContent(Text)
@@ -8685,12 +8775,7 @@ return MidnightBanner
         function Label:SetText(t)
             Label.Text = tostring(t)
             l.Instance.Text = Label.Text
-            for _, Data in ipairs(Label.Section.Window.SearchableElements) do
-                if Data.Element == l.Instance then
-                    Data.Name = Label.Text
-                    Data.SearchName = StringLower(Label.Text)
-                end
-            end
+            Label.Section.Window:RenameEntry(l.Instance, Label.Text)
         end
 
         function Label:SetVisible(Bool)
@@ -8704,6 +8789,580 @@ return MidnightBanner
 
         Label.Section.Window:RegisterElement(l.Instance, "Label", Label.Text, Label.Section, Label.Section.Page, Label, LabelData and LabelData.Badge)
         return Label
+    end
+
+    -- =====================================================================
+    -- PROGRESS: progress bar updated by the script
+    --   Section:AddProgress({Name = "Level", Value = 45, Max = 100, Format = "Value"})
+    --   Format: "Percent" (70%), "Value" (45/100), "None" or function(Value, Max, Percent) -> string
+    -- =====================================================================
+    Library.Sections.Progress = function(self, Data)
+        Data = Data or {}
+        if type(Data.Steps) == "table" then return self:Steps(Data) end
+        local Progress = {
+            Section = self,
+            Name = Data.Name or "Progress",
+            Min = tonumber(Data.Min) or 0,
+            Max = tonumber(Data.Max) or 100,
+            Value = tonumber(Data.Value or Data.Default) or 0,
+            Format = Data.Format or "Percent",
+            Decimals = Data.Decimals or 0,
+            Color = Data.Color,
+            Animate = Data.Animate ~= false,
+            DisplayText = ""
+        }
+
+        local Items = {} do
+            Items["Main"] = Instances:Create("Frame", {Parent = Progress.Section.Items["Content"].Instance, Size = UDim2New(1, 0, 0, 44), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1})
+            local Body = Instances:Create("Frame", {Parent = Items["Main"].Instance, Size = UDim2New(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1})
+            Instances:Create("UIListLayout", {Parent = Body.Instance, SortOrder = Enum.SortOrder.LayoutOrder})
+            local TopRow = Instances:Create("Frame", {Parent = Body.Instance, LayoutOrder = 1, Size = UDim2New(1, 0, 0, 26), BackgroundTransparency = 1})
+
+            Progress.Description = GetDescription(Data)
+            if Progress.Description then
+                Items["Description"] = CreateDescription(Body.Instance, Progress.Description, UDim2New(0, 0, 0, 0), UDim2New(1, -10, 0, 0))
+                Items["Description"].Instance.LayoutOrder = 2
+                Items["Description"].Instance:FindFirstChildOfClass("UIPadding").PaddingBottom = UDimNew(0, 2)
+                Items["Description"].Instance:FindFirstChildOfClass("UIPadding").PaddingTop = UDimNew(0, 3)
+            end
+            local BarRow = Instances:Create("Frame", {Parent = Body.Instance, LayoutOrder = 3, Size = UDim2New(1, 0, 0, 18), BackgroundTransparency = 1})
+
+            Items["Text"] = Instances:Create("TextLabel", {Parent = TopRow.Instance, Position = UDim2New(0, 0, 0, 6), Text = Progress.Name, TextXAlignment = Enum.TextXAlignment.Left, FontFace = Library.Font, TextColor3 = Library.Theme.Text, TextSize = 15, BackgroundTransparency = 1, Size = UDim2New(1, -90, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd}):AddToTheme({TextColor3 = 'Text'})
+
+            Items["ValPill"] = Instances:Create("Frame", {Parent = TopRow.Instance, AnchorPoint = Vector2New(1, 0), Position = UDim2New(1, 0, 0, 5), Size = UDim2New(0, 0, 0, 20), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = Library.Theme.Element, BorderSizePixel = 0}):AddToTheme({BackgroundColor3 = 'Element'})
+            Instances:Create("UICorner", {Parent = Items["ValPill"].Instance, CornerRadius = UDimNew(0, 5)})
+            Instances:Create("UIPadding", {Parent = Items["ValPill"].Instance, PaddingLeft = UDimNew(0, 8), PaddingRight = UDimNew(0, 8)})
+            Instances:Create("UIStroke", {Parent = Items["ValPill"].Instance, Color = Library.Theme.Outline, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}):AddToTheme({Color = 'Outline'})
+            Items["Val"] = Instances:Create("TextLabel", {Parent = Items["ValPill"].Instance, Size = UDim2New(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, Text = "", FontFace = Library.Font, TextColor3 = Library.Theme.Text, TextTransparency = 0.1, TextSize = 13, BackgroundTransparency = 1}):AddToTheme({TextColor3 = 'Text'})
+
+            Items["Bar"] = Instances:Create("Frame", {Parent = BarRow.Instance, Position = UDim2New(0, 0, 0, 6), Size = UDim2New(1, 0, 0, 8), BackgroundColor3 = Library.Theme.Element, BorderSizePixel = 0, ClipsDescendants = true}):AddToTheme({BackgroundColor3 = 'Element'})
+            Instances:Create("UICorner", {Parent = Items["Bar"].Instance, CornerRadius = UDimNew(1, 0)})
+            Items["Fill"] = Instances:Create("Frame", {Parent = Items["Bar"].Instance, Size = UDim2New(0, 0, 1, 0), BackgroundColor3 = FromRGB(255, 255, 255), BorderSizePixel = 0})
+            Instances:Create("UICorner", {Parent = Items["Fill"].Instance, CornerRadius = UDimNew(1, 0)})
+            local function FillColor()
+                if Progress.Color then return RGBSequence(Progress.Color:Lerp(FromRGB(0, 0, 0), 0.45), Progress.Color) end
+                return RGBSequence(AccentDark(), Library.Theme.Accent)
+            end
+            Items["Gradient"] = Instances:Create("UIGradient", {Parent = Items["Fill"].Instance, Color = FillColor()})
+                :AddToTheme({Color = FillColor})
+            Progress.FillColor = FillColor
+
+            if Data.Badge then Library:CreateBadge(Items["Text"].Instance, Data) end
+        end
+
+        local function Percent()
+            local Range = Progress.Max - Progress.Min
+            return Range > 0 and MathClamp((Progress.Value - Progress.Min) / Range, 0, 1) or 0
+        end
+
+        local function Number(N)
+            if Progress.Decimals > 0 then return StringFormat("%." .. Progress.Decimals .. "f", N) end
+            return tostring(MathFloor(N + 0.5))
+        end
+
+        local function BuildText()
+            local Pct = Percent()
+            local Format = Progress.Format
+            if type(Format) == "function" then
+                local Ok, Result = pcall(Format, Progress.Value, Progress.Max, Pct)
+                return Ok and tostring(Result) or ""
+            elseif Format == "Value" then
+                return Number(Progress.Value) .. "/" .. Number(Progress.Max)
+            elseif Format == "None" then
+                return ""
+            end
+            return tostring(MathFloor(Pct * 100 + 0.5)) .. "%"
+        end
+
+        local FillTween
+        local function Render(Instant)
+            local Pct = Percent()
+            local Goal = UDim2New(Pct, 0, 1, 0)
+            if FillTween then FillTween:Cancel() FillTween = nil end
+            if Progress.Animate and not Instant then
+                FillTween = TweenService:Create(Items["Fill"].Instance, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Goal})
+                FillTween:Play()
+            else
+                Items["Fill"].Instance.Size = Goal
+            end
+            Progress.DisplayText = BuildText()
+            Items["Val"].Instance.Text = Progress.DisplayText
+            Items["ValPill"].Instance.Visible = Progress.DisplayText ~= ""
+        end
+
+        function Progress:Set(Value, Max)
+            if Max ~= nil then Progress.Max = tonumber(Max) or Progress.Max end
+            Progress.Value = MathClamp(tonumber(Value) or Progress.Value, Progress.Min, Progress.Max)
+            Render()
+            return Progress
+        end
+
+        function Progress:Increment(Amount)
+            return Progress:Set(Progress.Value + (tonumber(Amount) or 1))
+        end
+
+        function Progress:SetMax(Max)
+            Progress.Max = tonumber(Max) or Progress.Max
+            Progress.Value = MathClamp(Progress.Value, Progress.Min, Progress.Max)
+            Render()
+        end
+
+        function Progress:Get()
+            return Progress.Value, Progress.Max, Percent()
+        end
+
+        function Progress:SetText(Text)
+            Progress.Name = tostring(Text)
+            Items["Text"].Instance.Text = Progress.Name
+            Progress.Section.Window:RenameEntry(Items["Main"].Instance, Progress.Name)
+        end
+
+        function Progress:SetFormat(Format)
+            Progress.Format = Format or "Percent"
+            Render(true)
+        end
+
+        function Progress:SetColor(Color)
+            Progress.Color = typeof(Color) == "Color3" and Color or nil
+            Items["Gradient"].Instance.Color = Progress.FillColor()
+        end
+
+        function Progress:SetVisible(Bool)
+            Items["Main"].Instance.Visible = Bool == true
+        end
+
+        function Progress:Destroy()
+            if FillTween then FillTween:Cancel() end
+            Progress.Section.Window:UnregisterElement(Items["Main"].Instance)
+            Items["Main"]:Clean()
+        end
+
+        Progress.Value = MathClamp(Progress.Value, Progress.Min, Progress.Max)
+        Render(true)
+
+        Progress.Section.Window:RegisterElement(Items["Main"].Instance, "Progress", Progress.Name, Progress.Section, Progress.Section.Page, Progress, Data.Badge)
+        return Progress
+    end
+
+    -- =====================================================================
+    -- STEPS: step-by-step progress (icon circles connected by a line)
+    --   Section:AddProgress({
+    --       Name = "Fishing Session", Icon = "activity",
+    --       Steps = {
+    --           {Name = "Ready", Icon = "check"},
+    --           {Name = "Casting", Icon = "fish"},
+    --           "Caught",                         -- a plain name works too
+    --       },
+    --       Current = 1,                          -- current step (1 = first)
+    --   })
+    -- =====================================================================
+    Library.Sections.Steps = function(self, Data)
+        Data = Data or {}
+        local CIRCLE, RING = 34, 44
+        local Steps = {
+            Section = self,
+            Name = Data.Name or "Steps",
+            Icon = Data.Icon,
+            Color = Data.Color,
+            Callback = Data.Callback or function() end,
+            List = {},
+            Current = 1,
+            DisplayText = ""
+        }
+
+        local Items = {}
+        local Slots = {}
+        local Lines = {}
+        local TweenFast = TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
+        local function Filled()
+            local C = Steps.Color
+            if C == "Accent" then return Library.Theme.Accent end
+            return typeof(C) == "Color3" and C or Library.Theme.Text
+        end
+
+        local function StateOf(Index)
+            if Index < Steps.Current then return "Done" end
+            if Index == Steps.Current then return "Current" end
+            return "Pending"
+        end
+
+        -- colors of each part by state (functions so they follow theme changes)
+        local Paint = {
+            Circle = function(i) return StateOf(i) == "Pending" and Library.Theme.Element or Filled() end,
+            Stroke = function(i) return StateOf(i) == "Pending" and Library.Theme.Outline or Filled() end,
+            Icon = function(i) return StateOf(i) == "Pending" and Library.Theme.Text or Library.Theme.Background end,
+            Label = function() return Library.Theme.Text end,
+            Ring = function() return Filled() end,
+            Line = function(i) return i < Steps.Current and Filled() or Library.Theme.Outline end
+        }
+
+        do
+            Items["Main"] = Instances:Create("Frame", {Parent = Steps.Section.Items["Content"].Instance, Size = UDim2New(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1})
+            Instances:Create("UIListLayout", {Parent = Items["Main"].Instance, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDimNew(0, 6)})
+            Instances:Create("UIPadding", {Parent = Items["Main"].Instance, PaddingTop = UDimNew(0, 4), PaddingBottom = UDimNew(0, 4)})
+
+            local TopRow = Instances:Create("Frame", {Parent = Items["Main"].Instance, LayoutOrder = 1, Size = UDim2New(1, 0, 0, 22), BackgroundTransparency = 1})
+            local TitleX = 0
+            local HeaderIcon = Library:GetIcon(Steps.Icon)
+            if HeaderIcon then
+                Items["HeaderIcon"] = Instances:Create("ImageLabel", {Parent = TopRow.Instance, AnchorPoint = Vector2New(0, 0.5), Position = UDim2New(0, 0, 0.5, 0), Size = UDim2FromOffset(18, 18), BackgroundTransparency = 1, Image = HeaderIcon, ImageColor3 = Library.Theme.Text, ScaleType = Enum.ScaleType.Fit}):AddToTheme({ImageColor3 = 'Text'})
+                TitleX = 26
+            end
+            Items["Text"] = Instances:Create("TextLabel", {Parent = TopRow.Instance, Position = UDim2New(0, TitleX, 0, 0), Size = UDim2New(1, -TitleX, 1, 0), BackgroundTransparency = 1, Text = Steps.Name, FontFace = GetBoldFont(), TextSize = 16, TextColor3 = Library.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd}):AddToTheme({TextColor3 = 'Text'})
+
+            Steps.Description = GetDescription(Data)
+            if Steps.Description then
+                Items["Description"] = CreateDescription(Items["Main"].Instance, Steps.Description, UDim2New(0, 0, 0, 0), UDim2New(1, -10, 0, 0))
+                Items["Description"].Instance.LayoutOrder = 2
+                Items["Description"].Instance:FindFirstChildOfClass("UIPadding").PaddingBottom = UDimNew(0, 0)
+            end
+
+            Items["Track"] = Instances:Create("Frame", {Parent = Items["Main"].Instance, LayoutOrder = 3, Size = UDim2New(1, 0, 0, RING + 22), BackgroundTransparency = 1})
+
+            if Data.Badge then Library:CreateBadge(Items["Text"].Instance, Data) end
+        end
+
+        local function Normalize(List)
+            local Out = {}
+            for _, Step in ipairs(List or {}) do
+                if type(Step) == "table" then
+                    TableInsert(Out, {Name = tostring(Step.Name or Step[1] or ""), Icon = Step.Icon or Step[2]})
+                else
+                    TableInsert(Out, {Name = tostring(Step), Icon = nil})
+                end
+            end
+            return Out
+        end
+
+        local RenderToken = 0
+        local LINE_TIME = 0.28   -- time for a line to fill up to the next step
+        local function Info(Time, Style, Direction, Delay, Repeat, Reverses)
+            return TweenInfo.new(Time, Style or Enum.EasingStyle.Quart, Direction or Enum.EasingDirection.Out, Repeat or 0, Reverses or false, Delay or 0)
+        end
+        local function Play(Object, TweenData, Props)
+            local Tween = TweenService:Create(Object, TweenData, Props)
+            Tween:Play()
+            return Tween
+        end
+
+        local function StopPulse(Slot)
+            for _, Tween in ipairs(Slot.PulseTweens or {}) do Tween:Cancel() end
+            Slot.PulseTweens = nil
+            Slot.Pulse.Instance.Visible = false
+        end
+
+        -- soft wave that keeps expanding around the current step
+        local function StartPulse(Slot, Delay)
+            StopPulse(Slot)
+            local Pulse, PulseStroke = Slot.Pulse.Instance, Slot.PulseStroke.Instance
+            Pulse.Size = UDim2FromOffset(RING, RING)
+            PulseStroke.Transparency = 0.35
+            PulseStroke.Color = Paint.Ring()
+            Pulse.Visible = true
+            local Loop = Info(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, Delay, -1)
+            Slot.PulseTweens = {
+                Play(Pulse, Loop, {Size = UDim2FromOffset(RING + 18, RING + 18)}),
+                Play(PulseStroke, Loop, {Transparency = 1})
+            }
+        end
+
+        local function ClearTrack()
+            for _, Slot in ipairs(Slots) do StopPulse(Slot) Slot.Holder:Clean() end
+            for _, Line in ipairs(Lines) do Line.Base:Clean() end
+            TableClear(Slots)
+            TableClear(Lines)
+        end
+
+        local function Build()
+            ClearTrack()
+            local Count = #Steps.List
+            if Count == 0 then return end
+            local Track = Items["Track"].Instance
+            local Center = RING / 2
+
+            for i = 1, Count - 1 do
+                local Line = {}
+                Line.Base = Instances:Create("Frame", {
+                    Parent = Track,
+                    AnchorPoint = Vector2New(0, 0.5),
+                    Position = UDim2New((i - 0.5) / Count, CIRCLE / 2 + 5, 0, Center),
+                    Size = UDim2New(1 / Count, -(CIRCLE + 10), 0, 2),
+                    BackgroundColor3 = Library.Theme.Outline,
+                    BorderSizePixel = 0
+                }):AddToTheme({BackgroundColor3 = 'Outline'})
+                Instances:Create("UICorner", {Parent = Line.Base.Instance, CornerRadius = UDimNew(1, 0)})
+                -- colored part that grows from left to right
+                Line.Fill = Instances:Create("Frame", {
+                    Parent = Line.Base.Instance,
+                    Size = UDim2New(i < Steps.Current and 1 or 0, 0, 1, 0),
+                    BackgroundColor3 = Filled(),
+                    BorderSizePixel = 0
+                }):AddToTheme({BackgroundColor3 = Filled})
+                Instances:Create("UICorner", {Parent = Line.Fill.Instance, CornerRadius = UDimNew(1, 0)})
+                Lines[i] = Line
+            end
+
+            for i, Step in ipairs(Steps.List) do
+                local Slot = {}
+                Slot.Holder = Instances:Create("Frame", {Parent = Track, AnchorPoint = Vector2New(0.5, 0), Position = UDim2New((i - 0.5) / Count, 0, 0, 0), Size = UDim2New(1 / Count, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 2})
+
+                Slot.Pulse = Instances:Create("Frame", {Parent = Slot.Holder.Instance, AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0, Center), Size = UDim2FromOffset(RING, RING), BackgroundTransparency = 1, Visible = false, ZIndex = 2})
+                Instances:Create("UICorner", {Parent = Slot.Pulse.Instance, CornerRadius = UDimNew(1, 0)})
+                Slot.PulseStroke = Instances:Create("UIStroke", {Parent = Slot.Pulse.Instance, Color = Paint.Ring(), Thickness = 1.5, Transparency = 1}):AddToTheme({Color = Paint.Ring})
+
+                Slot.Ring = Instances:Create("Frame", {Parent = Slot.Holder.Instance, AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0, Center), Size = UDim2FromOffset(RING, RING), BackgroundTransparency = 1, ZIndex = 2})
+                Instances:Create("UICorner", {Parent = Slot.Ring.Instance, CornerRadius = UDimNew(1, 0)})
+                Slot.RingStroke = Instances:Create("UIStroke", {Parent = Slot.Ring.Instance, Color = Paint.Ring(), Thickness = 1.5, Transparency = 1}):AddToTheme({Color = Paint.Ring})
+
+                Slot.Circle = Instances:Create("Frame", {Parent = Slot.Holder.Instance, AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0, Center), Size = UDim2FromOffset(CIRCLE, CIRCLE), BackgroundColor3 = Paint.Circle(i), BorderSizePixel = 0, ZIndex = 3})
+                    :AddToTheme({BackgroundColor3 = function() return Paint.Circle(i) end})
+                Instances:Create("UICorner", {Parent = Slot.Circle.Instance, CornerRadius = UDimNew(1, 0)})
+                Slot.Scale = Instances:Create("UIScale", {Parent = Slot.Circle.Instance, Scale = 1})
+                Slot.Stroke = Instances:Create("UIStroke", {Parent = Slot.Circle.Instance, Color = Paint.Stroke(i), Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}):AddToTheme({Color = function() return Paint.Stroke(i) end})
+
+                Slot.IconImage = Library:GetIcon(Step.Icon)
+                Slot.CheckImage = Library:GetIcon("check")
+                Slot.Icon = Instances:Create("ImageLabel", {Parent = Slot.Circle.Instance, AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0.5, 0), Size = UDim2FromOffset(16, 16), BackgroundTransparency = 1, Image = Slot.IconImage or "", ImageColor3 = Paint.Icon(i), ScaleType = Enum.ScaleType.Fit, ZIndex = 4})
+                    :AddToTheme({ImageColor3 = function() return Paint.Icon(i) end})
+                -- no icon: show the step number (or ✓ when done)
+                Slot.Number = Instances:Create("TextLabel", {Parent = Slot.Circle.Instance, Size = UDim2New(1, 0, 1, 0), BackgroundTransparency = 1, Text = tostring(i), FontFace = GetBoldFont(), TextSize = 14, TextColor3 = Paint.Icon(i), ZIndex = 4})
+                    :AddToTheme({TextColor3 = function() return Paint.Icon(i) end})
+
+                Slot.Label = Instances:Create("TextLabel", {Parent = Slot.Holder.Instance, AnchorPoint = Vector2New(0.5, 0), Position = UDim2New(0.5, 0, 0, RING + 4), Size = UDim2New(1, -4, 0, 16), BackgroundTransparency = 1, Text = Step.Name, FontFace = Library.Font, TextSize = 13, TextColor3 = Paint.Label(), TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 2})
+                    :AddToTheme({TextColor3 = Paint.Label})
+
+                Slots[i] = Slot
+            end
+        end
+
+        local function SetGlyph(Slot, i, State)
+            local Image = (State == "Done" and Slot.CheckImage) or Slot.IconImage
+            Slot.Icon.Instance.Image = Image or ""
+            Slot.Icon.Instance.Visible = Image ~= nil
+            Slot.Number.Instance.Visible = Image == nil
+            Slot.Number.Instance.Text = State == "Done" and "✓" or tostring(i)
+        end
+
+        local function Render(Instant)
+            local Count = #Steps.List
+            local Previous = Steps.RenderedCurrent or Steps.Current
+            local Current = Steps.Current
+            Steps.RenderedCurrent = Current
+            RenderToken += 1
+            local Token = RenderToken
+            local Forward = Current >= Previous
+
+            -- when each step is "reached": going forward the line fills first and then the step lights up
+            local function ArriveDelay(i)
+                if Instant or not Forward then return 0 end
+                return MathMax(0, i - Previous) * LINE_TIME
+            end
+
+            for i, Line in ipairs(Lines) do
+                local Target = i < Current and 1 or 0
+                local Fill = Line.Fill.Instance
+                Fill.BackgroundColor3 = Filled()
+                if Instant then
+                    Fill.Size = UDim2New(Target, 0, 1, 0)
+                elseif Fill.Size.X.Scale ~= Target then
+                    local Delay = Forward and MathMax(0, i - Previous) * LINE_TIME or MathMax(0, Previous - 1 - i) * 0.12
+                    Play(Fill, Info(LINE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, Delay), {Size = UDim2New(Target, 0, 1, 0)})
+                end
+            end
+
+            for i, Slot in ipairs(Slots) do
+                local State = StateOf(i)
+                local OldState = Slot.State
+                Slot.State = State
+                local Delay = ArriveDelay(i)
+                local Fade = Info(0.25, nil, nil, Delay)
+
+                local Goals = {
+                    {Slot.Circle.Instance, {BackgroundColor3 = Paint.Circle(i)}},
+                    {Slot.Stroke.Instance, {Color = Paint.Stroke(i)}},
+                    {Slot.Icon.Instance, {ImageColor3 = Paint.Icon(i), ImageTransparency = State == "Pending" and 0.55 or 0}},
+                    {Slot.Number.Instance, {TextColor3 = Paint.Icon(i), TextTransparency = State == "Pending" and 0.55 or 0}},
+                    {Slot.Label.Instance, {TextTransparency = State == "Pending" and 0.6 or (State == "Current" and 0 or 0.15)}},
+                    {Slot.RingStroke.Instance, {Transparency = State == "Current" and 0 or 1}}
+                }
+                for _, Goal in ipairs(Goals) do
+                    if Instant then
+                        for Prop, Value in pairs(Goal[2]) do Goal[1][Prop] = Value end
+                    else
+                        Play(Goal[1], Fade, Goal[2])
+                    end
+                end
+
+                if Instant or OldState == State then
+                    SetGlyph(Slot, i, State)
+                else
+                    -- swap the icon when the step is reached, and the new icon pops in
+                    task.delay(Delay, function()
+                        if Token ~= RenderToken or not Slot.Icon.Instance.Parent then return end
+                        SetGlyph(Slot, i, State)
+                        Slot.Icon.Instance.Size = UDim2FromOffset(4, 4)
+                        Play(Slot.Icon.Instance, Info(0.35, Enum.EasingStyle.Back), {Size = UDim2FromOffset(16, 16)})
+                        if State ~= "Pending" then
+                            Slot.Scale.Instance.Scale = State == "Current" and 0.8 or 0.9
+                            Play(Slot.Scale.Instance, Info(0.45, Enum.EasingStyle.Back), {Scale = 1})
+                        end
+                    end)
+                end
+
+                if State == "Current" then
+                    if not Instant and OldState ~= "Current" then
+                        Slot.Ring.Instance.Size = UDim2FromOffset(CIRCLE, CIRCLE)
+                        Play(Slot.Ring.Instance, Info(0.4, Enum.EasingStyle.Back, nil, Delay), {Size = UDim2FromOffset(RING, RING)})
+                    end
+                    if not Slot.PulseTweens then StartPulse(Slot, Instant and 0 or Delay + 0.3) end
+                else
+                    StopPulse(Slot)
+                end
+            end
+
+            -- all done: a wave runs across the circles
+            if not Instant and Current > Count and Previous <= Count then
+                local Base = ArriveDelay(Count) + 0.2
+                for i, Slot in ipairs(Slots) do
+                    task.delay(Base + (i - 1) * 0.07, function()
+                        if Token ~= RenderToken or not Slot.Scale.Instance.Parent then return end
+                        Play(Slot.Scale.Instance, Info(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, 1, true), {Scale = 1.15})
+                    end)
+                end
+            end
+
+            local CurrentStep = Steps.List[Steps.Current]
+            Steps.DisplayText = CurrentStep and CurrentStep.Name or (Count > 0 and "Done" or "")
+        end
+
+        local function Clamp(Index)
+            return MathClamp(MathFloor(tonumber(Index) or 1), 1, #Steps.List + 1)
+        end
+
+        -- Index goes from 1 to #Steps; #Steps + 1 marks everything as done
+        function Steps:SetStep(Index, Silent)
+            local New = Clamp(Index)
+            if type(Index) == "string" then
+                for i, Step in ipairs(Steps.List) do
+                    if Step.Name == Index then New = i break end
+                end
+            end
+            local Changed = New ~= Steps.Current
+            Steps.Current = New
+            Render()
+            if Changed and not Silent then
+                local Step = Steps.List[New]
+                Library:SafeCall(Steps.Callback, New, Step and Step.Name or nil)
+            end
+            return Steps
+        end
+
+        function Steps:Next() return Steps:SetStep(Steps.Current + 1) end
+        function Steps:Previous() return Steps:SetStep(Steps.Current - 1) end
+        function Steps:Reset() return Steps:SetStep(1) end
+        function Steps:Complete() return Steps:SetStep(#Steps.List + 1) end
+        function Steps:IsComplete() return Steps.Current > #Steps.List end
+
+        function Steps:GetStep()
+            local Step = Steps.List[Steps.Current]
+            return Steps.Current, Step and Step.Name or nil
+        end
+
+        function Steps:SetSteps(List, Current)
+            Steps.List = Normalize(List)
+            Steps.Current = Clamp(Current or 1)
+            Build()
+            Render(true)
+        end
+
+        function Steps:SetText(Text)
+            Steps.Name = tostring(Text)
+            Items["Text"].Instance.Text = Steps.Name
+            Steps.Section.Window:RenameEntry(Items["Main"].Instance, Steps.Name)
+        end
+
+        function Steps:SetColor(Color)
+            Steps.Color = Color
+            Render(true)
+            for _, Slot in ipairs(Slots) do Slot.RingStroke.Instance.Color = Paint.Ring() end
+        end
+
+        function Steps:SetVisible(Bool)
+            Items["Main"].Instance.Visible = Bool == true
+        end
+
+        function Steps:Destroy()
+            ClearTrack()
+            Steps.Section.Window:UnregisterElement(Items["Main"].Instance)
+            Items["Main"]:Clean()
+        end
+
+        Steps.List = Normalize(Data.Steps)
+        Steps.Current = Clamp(Data.Current or Data.Default or 1)
+        Build()
+        Render(true)
+
+        Steps.Section.Window:RegisterElement(Items["Main"].Instance, "Progress", Steps.Name, Steps.Section, Steps.Section.Page, Steps, Data.Badge)
+        return Steps
+    end
+
+    -- =====================================================================
+    -- DIVIDER / SPACER: organize large sections
+    --   Section:AddDivider()               -> line only
+    --   Section:AddDivider("Advanced")     -> line with text in the middle
+    --   Section:AddDivider({Text = "Advanced", Align = "Left"})
+    --   Section:AddSpacer(12)              -> 12px of empty space
+    -- =====================================================================
+    Library.Sections.Divider = function(self, Data)
+        if type(Data) ~= "table" then Data = {Text = Data} end
+        local Divider = {Section = self, Text = Data.Text and tostring(Data.Text) or "", Align = Data.Align or "Center"}
+
+        local Main = Instances:Create("Frame", {Parent = Divider.Section.Items["Content"].Instance, Size = UDim2New(1, 0, 0, 20), BackgroundTransparency = 1})
+        local Line = Instances:Create("Frame", {Parent = Main.Instance, AnchorPoint = Vector2New(0, 0.5), Position = UDim2New(0, 0, 0.5, 0), Size = UDim2New(1, 0, 0, 1), BackgroundColor3 = Library.Theme.Text, BackgroundTransparency = 0.88, BorderSizePixel = 0}):AddToTheme({BackgroundColor3 = 'Text'})
+        local Holder = Instances:Create("Frame", {Parent = Main.Instance, AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0.5, 0), Size = UDim2New(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = Library.Theme.Inline, BorderSizePixel = 0, ZIndex = 2}):AddToTheme({BackgroundColor3 = 'Inline'})
+        Instances:Create("UIPadding", {Parent = Holder.Instance, PaddingLeft = UDimNew(0, 8), PaddingRight = UDimNew(0, 8)})
+        local Label = Instances:Create("TextLabel", {Parent = Holder.Instance, Size = UDim2New(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, Text = Divider.Text, FontFace = Library.Font, TextSize = 13, TextColor3 = Library.Theme.Text, TextTransparency = 0.45, ZIndex = 3}):AddToTheme({TextColor3 = 'Text'})
+
+        local function Layout()
+            local HasText = Divider.Text ~= ""
+            Holder.Instance.Visible = HasText
+            Label.Instance.Text = Divider.Text
+            if Divider.Align == "Left" then
+                Holder.Instance.AnchorPoint = Vector2New(0, 0.5)
+                Holder.Instance.Position = UDim2New(0, 6, 0.5, 0)
+            else
+                Holder.Instance.AnchorPoint = Vector2New(0.5, 0.5)
+                Holder.Instance.Position = UDim2New(0.5, 0, 0.5, 0)
+            end
+        end
+        Layout()
+
+        function Divider:SetText(Text)
+            Divider.Text = Text and tostring(Text) or ""
+            Layout()
+        end
+
+        function Divider:SetVisible(Bool)
+            Main.Instance.Visible = Bool == true
+        end
+
+        function Divider:Destroy()
+            Main:Clean()
+        end
+
+        Divider.Line = Line
+        return Divider
+    end
+
+    Library.Sections.Spacer = function(self, Height)
+        if type(Height) == "table" then Height = Height.Height or Height.Size end
+        local Spacer = {Section = self}
+        local Main = Instances:Create("Frame", {Parent = Spacer.Section.Items["Content"].Instance, Size = UDim2New(1, 0, 0, tonumber(Height) or 8), BackgroundTransparency = 1})
+        function Spacer:SetHeight(H) Main.Instance.Size = UDim2New(1, 0, 0, tonumber(H) or 8) end
+        function Spacer:SetVisible(Bool) Main.Instance.Visible = Bool == true end
+        function Spacer:Destroy() Main:Clean() end
+        return Spacer
     end
 
     function Library:CreateWindow(Data) return self:Window(Data) end
@@ -8720,6 +9379,10 @@ return MidnightBanner
     function Library.Sections:AddKeybind(Data) return self:Keybind(Data) end
     function Library.Sections:AddLabel(Text) return self:Label(Text) end
     function Library.Sections:AddSelect(Data) return self:Select(Data) end
+    function Library.Sections:AddProgress(Data) return self:Progress(Data) end
+    function Library.Sections:AddSteps(Data) return self:Steps(Data) end
+    function Library.Sections:AddDivider(Data) return self:Divider(Data) end
+    function Library.Sections:AddSpacer(Height) return self:Spacer(Height) end
 
     getgenv().MidnightLibrary = Library
     if getgenv().Library == nil then getgenv().Library = Library end
